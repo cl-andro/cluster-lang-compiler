@@ -1,21 +1,22 @@
-MIT License
+CLUSTER-LANG COMPILER LICENSE
 
-Copyright (c) 2026 Cluster-Family
+Copyright (c) 2026 Zaid Khan / Cluster-Family. All rights reserved.
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Subject to the terms and conditions of this License, you are granted a non-exclusive, non-transferable, royalty-free license to use the Cluster-lang compiler under the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. ALLOWED FREE USE
+You may download, compile, and run this compiler for non-commercial purposes:
+   * Individual Developers: Free for personal use, learning, and developing open-source or non-commercial applications.
+   * Educational Institutions: Free for academic learning, teaching, and classroom use.
+   * Researchers: Free for research projects, academic study, and development focused on creating technologies for the benefit of human civilization.
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+2. COMMERCIAL USE RESTRICTION
+Any use of this compiler by a commercial entity, company, corporation, or within a commercial/business environment for the purpose of generating revenue, proprietary product development, or internal business operations requires a separate commercial license. 
+You must contact Zaid Khan (email: zaidkhan137782@gmail.com) to request permission or obtain a commercial license prior to any such use.
+
+3. MODIFICATION AND DISTRIBUTION RESTRICTIONS
+   * Editing, modifying, altering, or adapting the compiler source code is strictly prohibited.
+   * Copying, reproducing, or redistributing the compiler source code or modified versions thereof is not permitted.
+   * Forking this repository to create derivative works of the compiler is not allowed. The source code is made available for compilation and inspection purposes only.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
