@@ -178,21 +178,21 @@ fn main():
         
         put "[ZKC] Compiling LLVM IR to native binary..."
         
-        clang_cmd := "clang " + ll_path + " -no-pie -o " + output_path
+        clang_cmd := "clang -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
         clang_specific := "/media/alamgir-zk/debian13-hdd/alamgir-zk/build/chromium/src/third_party/llvm-build/Release+Asserts/bin/clang"
         
         ret := system(c_str(clang_cmd))
         if ret != 0:
-            clang_specific_cmd := clang_specific + " " + ll_path + " -no-pie -o " + output_path
+            clang_specific_cmd := clang_specific + " -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
             ret = system(c_str(clang_specific_cmd))
             
         if ret != 0:
             put "[ZKC] clang compiler failed or not found. Trying llc + gcc..."
-            llc_cmd := "llc " + ll_path + " -filetype=obj -o " + obj_path
+            llc_cmd := "llc -opaque-pointers " + ll_path + " -filetype=obj -o " + obj_path
             ret = system(c_str(llc_cmd))
             if ret != 0:
                 llc_specific := "/media/alamgir-zk/debian13-hdd/alamgir-zk/Cluster-Family/cluster-lang/zk_modules/containers/rust/rootfs/opt/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/llc"
-                llc_specific_cmd := llc_specific + " " + ll_path + " -filetype=obj -o " + obj_path
+                llc_specific_cmd := llc_specific + " -opaque-pointers " + ll_path + " -filetype=obj -o " + obj_path
                 ret = system(c_str(llc_specific_cmd))
                 
             if ret == 0:
