@@ -21,7 +21,20 @@ jobs:
     - name: Compile Self-Hosted Compiler Code
       run: |
         chmod +x bin/compiler.out
-        ./bin/compiler.out main.cl -o zkc
+        ./bin/compiler.out main.cl -o zkc || true
+        echo "=== COMPILER RUN COMPLETED ==="
+        ls -la
+        if [ ! -f zkc ]; then
+          echo "=== COMPILATION FAILED ==="
+          echo "Checking main.ll file if exists..."
+          if [ -f main.ll ]; then
+             echo "=== main.ll EXISTS, RUNNING MANUAL CLANG ==="
+             clang main.ll -no-pie -o zkc
+          else
+             echo "=== main.ll DOES NOT EXIST! ==="
+          fi
+          exit 1
+        fi
 
     - name: Test Native Compilation Flow
       run: |
