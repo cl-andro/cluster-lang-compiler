@@ -1,0 +1,35 @@
+name: Build and Test Compiler
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install LLVM and Clang Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y llvm clang gcc
+
+    - name: Bootstrap Compiler
+      run: |
+        # Download pre-built compiler binary
+        # (This URL will be updated to point to the official release page)
+        curl -L -o compiler.out https://github.com/cl-andro/cluster-lang-compiler/releases/latest/download/compiler.out
+        chmod +x compiler.out
+
+    - name: Compile Self-Hosted Compiler Code
+      run: |
+        ./compiler.out main.zk -o zkc
+
+    - name: Test Native Compilation Flow
+      run: |
+        ./zkc input.zk -o input.out
+        ./input.out
