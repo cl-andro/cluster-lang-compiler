@@ -111,7 +111,7 @@ fn parse_file(file_path: string, &nodes: vector[ASTNode], &root_ids: vector[int]
         if stmt_id != -1:
             stmt_node := nodes[stmt_id + 0]
             if stmt_node.kind == "IMPORT":
-                imp_path := "pure-cluster/self-host/" + stmt_node.name + ".zk"
+                imp_path := stmt_node.name + ".cl"
                 parse_file(imp_path, nodes, root_ids)
             else:
                 list_push(root_ids, stmt_id)
@@ -134,7 +134,7 @@ fn get_output_path(file_path: string) -> string:
 
 fn main():
     if list_size(sys_args) < 1:
-        put "Usage: zkc <source_file.zk> [-o <output_file>]"
+        put "Usage: zkc <source_file.cl> [-o <output_file>]"
     else:
         file_path := sys_args[0 + 0]
         

@@ -2,15 +2,15 @@
 
 Welcome to the official, fully independent, self-hosted compiler repository for the **Cluster programming language**. 
 
-This repository contains the native frontend and driver logic written entirely in pure Cluster-lang. It compiles Cluster-lang source files (`.zk`) directly to native binaries via LLVM IR—with **zero dependencies on Python or G++**.
+This repository contains the native frontend and driver logic written entirely in pure Cluster-lang. It compiles Cluster-lang source files (`.cl`) directly to native binaries via LLVM IR—with **zero dependencies on Python or G++**.
 
 ---
 
 ## 🏗️ How it Works
 
 The compiler operates in four stages:
-1. **Frontend Parsing**: Resolves grammatical tokens (`lexer.zk`), builds the Abstract Syntax Tree (`parser.zk`), and parses module structures (`ast.zk`).
-2. **Intermediate Code Generation (`codegen.zk`)**: Translates AST nodes into optimized text-based **LLVM Intermediate Representation (LLVM IR)**.
+1. **Frontend Parsing**: Resolves grammatical tokens (`lexer.cl`), builds the Abstract Syntax Tree (`parser.cl`), and parses module structures (`ast.cl`).
+2. **Intermediate Code Generation (`codegen.cl`)**: Translates AST nodes into optimized text-based **LLVM Intermediate Representation (LLVM IR)**.
 3. **Machine Code Emission**: Emits platform-specific machine code (object files) by automatically calling LLVM backend tools (`clang` or `llc`).
 4. **Linking**: Links the object files with standard startup wrappers (`libc`) to produce independent native binaries.
 
@@ -21,26 +21,26 @@ The compiler operates in four stages:
 ### 1. Compile the Compiler Natively
 To compile this compiler itself from its source code using a pre-existing compiler binary (`compiler.out`):
 ```bash
-./compiler.out main.zk -o compiler.out
+./compiler.out main.cl -o compiler.out
 ```
 
 ### 2. Compile a Program
-To compile any `.zk` source file into a native executable:
+To compile any `.cl` source file into a native executable:
 ```bash
-./compiler.out your_program.zk
+./compiler.out your_program.cl
 ```
-*This compiles `your_program.zk` and generates the standalone binary executable `your_program.out`.*
+*This compiles `your_program.cl` and generates the standalone binary executable `your_program.out`.*
 
 ---
 
 ## 📁 Repository Structure
-* `main.zk`: Main compiler orchestrator and CLI driver.
-* `codegen.zk`: LLVM IR generator.
-* `parser.zk`: Grammatical parser.
-* `lexer.zk`: Lexer token generator.
-* `ast.zk`: AST node structures.
-* `input.zk`: A sandbox program to verify compiler runtime functionality.
-* `LICENSE`: MIT License.
+* `main.cl`: Main compiler orchestrator and CLI driver.
+* `codegen.cl`: LLVM IR generator.
+* `parser.cl`: Grammatical parser.
+* `lexer.cl`: Lexer token generator.
+* `ast.cl`: AST node structures.
+* `input.cl`: A sandbox program to verify compiler runtime functionality.
+* `LICENSE`: Custom license terms.
 
 ---
 

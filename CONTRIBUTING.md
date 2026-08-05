@@ -9,14 +9,14 @@ Every Cluster-lang module/package must follow this directory structure:
 
 ```text
 my-package/
-├── package.zk       # Package Manifest
+├── package.cl       # Package Manifest
 ├── README.md        # Description and usage instructions
 ├── LICENSE          # License file (e.g. MIT, Apache 2.0)
 └── src/
-    └── my_module.zk # Source code file(s)
+    └── my_module.cl # Source code file(s)
 ```
 
-### Manifest Format (`package.zk`)
+### Manifest Format (`package.cl`)
 The manifest file declares package metadata using standard YAML formatting:
 ```yaml
 name: "cl-http"

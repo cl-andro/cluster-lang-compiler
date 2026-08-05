@@ -1,0 +1,6 @@
+.cl_cache/
+cl-binary/
+compiler.out
+*.o
+*.ll
+*.out

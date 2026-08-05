@@ -27,9 +27,9 @@ jobs:
 
     - name: Compile Self-Hosted Compiler Code
       run: |
-        ./compiler.out main.zk -o zkc
+        ./compiler.out main.cl -o zkc
 
     - name: Test Native Compilation Flow
       run: |
-        ./zkc input.zk -o input.out
+        ./zkc input.cl -o input.out
         ./input.out
