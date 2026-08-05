@@ -207,5 +207,6 @@ fn main():
             put "[ZKC] Success! Standalone executable generated at: " + output_path
         else:
             put "[ZKC] Error: Failed to compile LLVM IR to binary. LLVM IR saved at: " + ll_path
+            exit_code(1)
 
 
