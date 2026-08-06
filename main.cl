@@ -11,7 +11,7 @@ cpp_inject "using namespace ast;"
 cpp_inject "using namespace lexer;"
 cpp_inject "using namespace parser;"
 cpp_inject "using namespace codegen;"
-cpp_inject "auto c_str = [](string s) { return s.c_str(); };"
+cpp_inject "auto c_str = [](const string& s) { return s.c_str(); };"
 
 fn get_zkc_dir() -> string:
     cpp_inject "auto local_get_bin_dir = []() -> std::string { char result[1024]; ssize_t count = readlink(\"/proc/self/exe\", result, 1024); if (count != -1) { std::string s(result, count); size_t slash = s.find_last_of('/'); if (slash != std::string::npos) return s.substr(0, slash + 1); } return \"\"; }; return local_get_bin_dir();"
