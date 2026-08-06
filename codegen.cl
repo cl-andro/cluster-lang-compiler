@@ -242,6 +242,10 @@ fn get_node_type(&nodes: vector[ASTNode], &var_allocs: vector[string], &var_type
             i += 1
         return "int"
     elif node.kind == "UNARY":
+        if node.op == "&":
+            return "ptr"
+        if node.op == "*":
+            return "int"
         return "int"
     elif node.kind == "BINARY":
         left_type := get_node_type(nodes, var_allocs, var_types, node.left_id)
@@ -356,7 +360,7 @@ fn hoist_var_allocas(&nodes: vector[ASTNode], &var_allocs: vector[string], &var_
                     emit(ir_output, "    %" + node.name + " = alloca %struct.string, align 8")
                 elif expr_type == "vector":
                     emit(ir_output, "    %" + node.name + " = alloca %struct.vector, align 8")
-                elif is_model_type(nodes, expr_type):
+                elif expr_type == "ptr" or is_model_type(nodes, expr_type):
                     emit(ir_output, "    %" + node.name + " = alloca ptr, align 8")
                 else:
                     emit(ir_output, "    %" + node.name + " = alloca i64, align 8")
@@ -413,7 +417,7 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             return v_reg
         if var_type == "string" or var_type == "vector":
             return var_struct_ref(node.name, var_allocs, var_types, temp_counter, ir_output)
-        elif is_model_type(nodes, var_type):
+        elif var_type == "ptr" or is_model_type(nodes, var_type):
             temp_counter += 1
             reg := "%t" + to_text(temp_counter)
             emit(ir_output, "    " + reg + " = load ptr, ptr %" + node.name + ", align 8")
@@ -442,6 +446,17 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             neg_reg: string := "%t" + to_text(temp_counter)
             emit(ir_output, "    " + neg_reg + " = sub i64 0, " + val_reg)
             return neg_reg
+        elif node.op == "&":
+            operand := nodes[node.left_id + 0]
+            if operand.kind == "VAR":
+                return "%" + operand.name
+            return ""
+        elif node.op == "*":
+            ptr_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, node.left_id)
+            temp_counter += 1
+            val_reg := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + val_reg + " = load i64, ptr " + ptr_reg + ", align 8")
+            return val_reg
         return ""
     elif node.kind == "BINARY":
         left_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, node.left_id)
@@ -639,6 +654,10 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
                     emit(ir_output, "    " + store_reg + " = ptrtoint ptr " + expr_reg + " to i64")
                 emit(ir_output, "    store " + store_type + " " + store_reg + ", ptr " + dest_ptr + ", align 8")
                 return ""
+            elif lhs_node.kind == "UNARY" and lhs_node.op == "*":
+                ptr_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, lhs_node.left_id)
+                emit(ir_output, "    store i64 " + expr_reg + ", ptr " + ptr_reg + ", align 8")
+                return ""
             elif lhs_node.kind == "MEMBER":
                 parent_node := nodes[lhs_node.left_id + 0]
                 model_name: string := ""
@@ -705,7 +724,7 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
                         emit(ir_output, "    %" + node.name + " = alloca %struct.string, align 8")
                     elif expr_type == "vector":
                         emit(ir_output, "    %" + node.name + " = alloca %struct.vector, align 8")
-                    elif is_model_type(nodes, expr_type):
+                    elif expr_type == "ptr" or is_model_type(nodes, expr_type):
                         emit(ir_output, "    %" + node.name + " = alloca ptr, align 8")
                     else:
                         emit(ir_output, "    %" + node.name + " = alloca i64, align 8")
@@ -789,7 +808,7 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
                     emit(ir_output, "    store i64 " + v2 + ", ptr " + d2 + ", align 8")
                 return ""
             else:
-                if is_model_type(nodes, expr_type):
+                if expr_type == "ptr" or is_model_type(nodes, expr_type):
                     emit(ir_output, "    store ptr " + expr_reg + ", ptr %" + node.name + ", align 8")
                 elif is_param_ref_int(node.name, var_allocs, var_types):
                     temp_counter += 1
@@ -832,6 +851,9 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             last_reg = generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, block_node.left_id)
             curr_block = block_node.right_id
         return last_reg
+    elif node.kind == "ASM":
+        emit(ir_output, "    call void asm sideeffect \"" + node.name + "\", \"\"()")
+        return ""
     elif node.kind == "RETURN":
         if node.left_id == -1:
             emit(ir_output, "    ret i64 0")
@@ -870,6 +892,21 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             ptr_val := "%t" + to_text(temp_counter)
             emit(ir_output, "    " + ptr_val + " = load ptr, ptr " + ptr_field + ", align 8")
             return ptr_val
+        if node.name == "ptr_read":
+            arg := nodes[node.left_id + 0]
+            ptr_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg.left_id)
+            temp_counter += 1
+            val_reg := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + val_reg + " = load i64, ptr " + ptr_reg + ", align 8")
+            return val_reg
+            
+        if node.name == "ptr_write":
+            arg1 := nodes[node.left_id + 0]
+            ptr_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg1.left_id)
+            arg2 := nodes[arg1.right_id + 0]
+            val_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg2.left_id)
+            emit(ir_output, "    store i64 " + val_reg + ", ptr " + ptr_reg + ", align 8")
+            return ""
             
         if node.name == "file_write" or node.name == "write_file":
             arg1_node := nodes[node.left_id + 0]

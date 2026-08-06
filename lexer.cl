@@ -88,7 +88,7 @@ fn tokenize(&lex: Lexer) -> vector[Token]:
             val = str_substr(lex.source, start, lex.cursor - start)
             
             kind := "IDENTIFIER"
-            if val == "fn" or val == "model" or val == "if" or val == "elif" or val == "else" or val == "while" or val == "for" or val == "in" or val == "break" or val == "continue" or val == "return" or val == "put" or val == "assert" or val == "unsafe" or val == "end" or val == "import" or val == "or" or val == "and" or val == "not" or val == "as":
+            if val == "fn" or val == "model" or val == "if" or val == "elif" or val == "else" or val == "while" or val == "for" or val == "in" or val == "break" or val == "continue" or val == "return" or val == "put" or val == "assert" or val == "unsafe" or val == "end" or val == "import" or val == "or" or val == "and" or val == "not" or val == "as" or val == "ptr" or val == "asm":
                 kind = "KEYWORD"
                 
             list_push(tokens, Token(kind=kind, value=val, line=lex.line, column=lex.column))

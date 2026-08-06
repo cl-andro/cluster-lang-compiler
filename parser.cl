@@ -135,6 +135,16 @@ fn parse_primary(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) 
         advance(cursor, tokens)
         val_id := parse_primary(cursor, tokens, nodes)
         return make_node(nodes, "UNARY", "", "not", 0, val_id, -1)
+        
+    if tok.kind == "SYMBOL" and tok.value == "&":
+        advance(cursor, tokens)
+        val_id := parse_primary(cursor, tokens, nodes)
+        return make_node(nodes, "UNARY", "", "&", 0, val_id, -1)
+        
+    if tok.kind == "SYMBOL" and tok.value == "*":
+        advance(cursor, tokens)
+        val_id := parse_primary(cursor, tokens, nodes)
+        return make_node(nodes, "UNARY", "", "*", 0, val_id, -1)
             
     if tok.kind == "NUMBER":
         advance(cursor, tokens)
@@ -588,6 +598,12 @@ fn parse_stmt(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> 
             alias_tok := consume(cursor, tokens, "IDENTIFIER", "")
             return make_node(nodes, "IMPORT", mod_name, alias_tok.value, 0, -1, -1)
         return make_node(nodes, "IMPORT", mod_name, "", 0, -1, -1)
+    elif tok.kind == "KEYWORD" and tok.value == "asm":
+        advance(cursor, tokens)
+        consume(cursor, tokens, "SYMBOL", "(")
+        asm_str_tok := consume(cursor, tokens, "STRING", "")
+        consume(cursor, tokens, "SYMBOL", ")")
+        return make_node(nodes, "ASM", asm_str_tok.value, "", 0, -1, -1)
     elif tok.kind == "IDENTIFIER" and tok.value == "cpp_inject":
         advance(cursor, tokens)
         consume(cursor, tokens, "STRING", "")
