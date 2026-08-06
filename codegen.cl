@@ -13,6 +13,9 @@ cpp_inject "std::vector<std::string> global_user_fns;"
 cpp_inject "void clear_global_user_fns() { global_user_fns.clear(); }"
 cpp_inject "void add_global_user_fn(std::string name) { global_user_fns.push_back(name); }"
 cpp_inject "bool has_global_user_fn(std::string name) { for (const auto &n : global_user_fns) { if (n == name) return true; } return false; }"
+cpp_inject "bool global_target_bpf = false;"
+cpp_inject "void set_global_target_bpf(bool val) { global_target_bpf = val; }"
+cpp_inject "bool has_global_target_bpf() { return global_target_bpf; }"
 
 fn emit(&ir_output: string, line: string):
     str_append(ir_output, line)
@@ -60,6 +63,14 @@ fn clear_user_fns():
 fn is_user_fn(name: string) -> int:
     res := 0
     cpp_inject "res = has_global_user_fn(name) ? 1 : 0;"
+    return res
+
+fn set_target_bpf(val: int):
+    cpp_inject "set_global_target_bpf(val == 1);"
+    
+fn is_target_bpf() -> int:
+    res := 0
+    cpp_inject "res = has_global_target_bpf() ? 1 : 0;"
     return res
 
 fn get_llvm_string_len(s: string) -> int:
@@ -1537,7 +1548,7 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             
         temp_counter += 1
         reg := "%t" + to_text(temp_counter)
-        if is_user_fn(fn_name) == 1:
+        if is_target_bpf() == 0 and is_user_fn(fn_name) == 1:
             temp_counter += 1
             fptr_reg := "%t" + to_text(temp_counter)
             emit(ir_output, "    " + fptr_reg + " = load ptr, ptr @__zk_fn_table_" + fn_name + ", align 8")
@@ -1746,8 +1757,12 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
     hoisted_vars := vector[string]()
     
     emit(ir_output, "; ModuleID = 'main'")
-    emit(ir_output, "target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"")
-    emit(ir_output, "target triple = \"x86_64-pc-linux-gnu\"")
+    if is_target_bpf() == 1:
+        emit(ir_output, "target datalayout = \"e-m:e-p:64:64-i64:64-n32:64-S128\"")
+        emit(ir_output, "target triple = \"bpf\"")
+    else:
+        emit(ir_output, "target datalayout = \"e-m:e-p270:32:32-p271:32:32-p272:64:64-i64:64-f80:128-n8:16:32:64-S128\"")
+        emit(ir_output, "target triple = \"x86_64-pc-linux-gnu\"")
     emit(ir_output, "")
     
     clear_user_fns()
@@ -1763,14 +1778,15 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
                 register_user_fn(node.name)
         i_fn += 1
         
-    emit(ir_output, "; IFT Table declarations")
-    j := 0
-    while j < list_size(user_fns):
-        fn_name := user_fns[j + 0]
-        fn_len := text_length(fn_name)
-        emit(ir_output, "@.str_fn_" + fn_name + " = private unnamed_addr constant [" + to_text(fn_len + 1) + " x i8] c\"" + fn_name + "\\00\", align 1")
-        emit(ir_output, "@__zk_fn_table_" + fn_name + " = global ptr @" + fn_name + ", align 8")
-        j += 1
+    if is_target_bpf() == 0:
+        emit(ir_output, "; IFT Table declarations")
+        j := 0
+        while j < list_size(user_fns):
+            fn_name := user_fns[j + 0]
+            fn_len := text_length(fn_name)
+            emit(ir_output, "@.str_fn_" + fn_name + " = private unnamed_addr constant [" + to_text(fn_len + 1) + " x i8] c\"" + fn_name + "\\00\", align 1")
+            emit(ir_output, "@__zk_fn_table_" + fn_name + " = global ptr @" + fn_name + ", align 8")
+            j += 1
         
     emit(ir_output, "")
     
@@ -2136,31 +2152,32 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
     emit(ir_output, "notfound:")
     emit(ir_output, "    ret i64 0")
     emit(ir_output, "}")
-    emit(ir_output, "; Standard Library sys_patch_function")
-    emit(ir_output, "define i64 @sys_patch_function(ptr %name_struct, ptr %new_ptr) {")
-    emit(ir_output, "entry:")
-    emit(ir_output, "    %p_str_field = getelementptr inbounds %struct.string, ptr %name_struct, i32 0, i32 0")
-    emit(ir_output, "    %p_str = load ptr, ptr %p_str_field, align 8")
-    
-    j_patch := 0
-    while j_patch < list_size(user_fns):
-        fn_name := user_fns[j_patch + 0]
-        emit(ir_output, "    %cmp_" + fn_name + " = call i32 @strcmp(ptr %p_str, ptr @.str_fn_" + fn_name + ")")
-        emit(ir_output, "    %is_" + fn_name + " = icmp eq i32 %cmp_" + fn_name + ", 0")
+    if is_target_bpf() == 0:
+        emit(ir_output, "; Standard Library sys_patch_function")
+        emit(ir_output, "define i64 @sys_patch_function(ptr %name_struct, ptr %new_ptr) {")
+        emit(ir_output, "entry:")
+        emit(ir_output, "    %p_str_field = getelementptr inbounds %struct.string, ptr %name_struct, i32 0, i32 0")
+        emit(ir_output, "    %p_str = load ptr, ptr %p_str_field, align 8")
         
-        next_label := "cont_" + to_text(j_patch)
-        patch_label := "patch_" + to_text(j_patch)
-        emit(ir_output, "    br i1 %is_" + fn_name + ", label %" + patch_label + ", label %" + next_label)
-        
-        emit(ir_output, patch_label + ":")
-        emit(ir_output, "    store ptr %new_ptr, ptr @__zk_fn_table_" + fn_name + ", align 8")
+        j_patch := 0
+        while j_patch < list_size(user_fns):
+            fn_name := user_fns[j_patch + 0]
+            emit(ir_output, "    %cmp_" + fn_name + " = call i32 @strcmp(ptr %p_str, ptr @.str_fn_" + fn_name + ")")
+            emit(ir_output, "    %is_" + fn_name + " = icmp eq i32 %cmp_" + fn_name + ", 0")
+            
+            next_label := "cont_" + to_text(j_patch)
+            patch_label := "patch_" + to_text(j_patch)
+            emit(ir_output, "    br i1 %is_" + fn_name + ", label %" + patch_label + ", label %" + next_label)
+            
+            emit(ir_output, patch_label + ":")
+            emit(ir_output, "    store ptr %new_ptr, ptr @__zk_fn_table_" + fn_name + ", align 8")
+            emit(ir_output, "    ret i64 0")
+            
+            emit(ir_output, next_label + ":")
+            j_patch += 1
+            
         emit(ir_output, "    ret i64 0")
-        
-        emit(ir_output, next_label + ":")
-        j_patch += 1
-        
-    emit(ir_output, "    ret i64 0")
-    emit(ir_output, "}")
+        emit(ir_output, "}")
     emit(ir_output, "")
     
     # 5. Output user-defined functions globally
@@ -2186,8 +2203,11 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
             
             fn_name := node.name
             if fn_name == "main":
-                fn_name = "__zk_user_main"
-                has_user_main = true
+                if is_target_bpf() == 1:
+                    fn_name = "main"
+                else:
+                    fn_name = "__zk_user_main"
+                    has_user_main = true
                 
             param_decl: string := ""
             curr_param := node.left_id
@@ -2269,54 +2289,56 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
         i += 1
     
     # 6. Main program logic entrypoint
-    emit(ir_output, "define i32 @main(i32 %argc, ptr %argv) {")
-    emit(ir_output, "entry:")
-    emit(ir_output, "    %argc64 = sext i32 %argc to i64")
-    emit(ir_output, "    %nargs = sub i64 %argc64, 1")
-    emit(ir_output, "    %data = alloca i64, i64 %argc64, align 8")
-    emit(ir_output, "    %strs = alloca %struct.string, i64 %argc64, align 8")
-    emit(ir_output, "    br label %sys_args_init")
-    emit(ir_output, "sys_args_init:")
-    emit(ir_output, "    %sa_i = phi i64 [ 0, %entry ], [ %sa_next, %sa_cont ]")
-    emit(ir_output, "    %sa_in = icmp slt i64 %sa_i, %nargs")
-    emit(ir_output, "    br i1 %sa_in, label %sa_body, label %sa_done")
-    emit(ir_output, "sa_body:")
-    emit(ir_output, "    %sa_argv_i = add i64 %sa_i, 1")
-    emit(ir_output, "    %argp = getelementptr ptr, ptr %argv, i64 %sa_argv_i")
-    emit(ir_output, "    %arg = load ptr, ptr %argp, align 8")
-    emit(ir_output, "    %alen = call i64 @strlen(ptr %arg)")
-    emit(ir_output, "    %sp = getelementptr inbounds %struct.string, ptr %strs, i64 %sa_i, i32 0")
-    emit(ir_output, "    store ptr %arg, ptr %sp, align 8")
-    emit(ir_output, "    %sl = getelementptr inbounds %struct.string, ptr %strs, i64 %sa_i, i32 1")
-    emit(ir_output, "    store i64 %alen, ptr %sl, align 8")
-    emit(ir_output, "    %spi = ptrtoint ptr %sp to i64")
-    emit(ir_output, "    %dpi = getelementptr i64, ptr %data, i64 %sa_i")
-    emit(ir_output, "    store i64 %spi, ptr %dpi, align 8")
-    emit(ir_output, "    br label %sa_cont")
-    emit(ir_output, "sa_cont:")
-    emit(ir_output, "    %sa_next = add i64 %sa_i, 1")
-    emit(ir_output, "    br label %sys_args_init")
-    emit(ir_output, "sa_done:")
-    emit(ir_output, "    %vdata_f = getelementptr inbounds %struct.vector, ptr @sys_args, i32 0, i32 0")
-    emit(ir_output, "    store ptr %data, ptr %vdata_f, align 8")
-    emit(ir_output, "    %vsz_f = getelementptr inbounds %struct.vector, ptr @sys_args, i32 0, i32 1")
-    emit(ir_output, "    store i64 %nargs, ptr %vsz_f, align 8")
-    emit(ir_output, "    %vcap_f = getelementptr inbounds %struct.vector, ptr @sys_args, i32 0, i32 2")
-    emit(ir_output, "    store i64 %nargs, ptr %vcap_f, align 8")
-    
-    if has_user_main:
-        emit(ir_output, "    %unused = call i64 @__zk_user_main()")
+    if is_target_bpf() == 0:
+        # 6. Main program logic entrypoint
+        emit(ir_output, "define i32 @main(i32 %argc, ptr %argv) {")
+        emit(ir_output, "entry:")
+        emit(ir_output, "    %argc64 = sext i32 %argc to i64")
+        emit(ir_output, "    %nargs = sub i64 %argc64, 1")
+        emit(ir_output, "    %data = alloca i64, i64 %argc64, align 8")
+        emit(ir_output, "    %strs = alloca %struct.string, i64 %argc64, align 8")
+        emit(ir_output, "    br label %sys_args_init")
+        emit(ir_output, "sys_args_init:")
+        emit(ir_output, "    %sa_i = phi i64 [ 0, %entry ], [ %sa_next, %sa_cont ]")
+        emit(ir_output, "    %sa_in = icmp slt i64 %sa_i, %nargs")
+        emit(ir_output, "    br i1 %sa_in, label %sa_body, label %sa_done")
+        emit(ir_output, "sa_body:")
+        emit(ir_output, "    %sa_argv_i = add i64 %sa_i, 1")
+        emit(ir_output, "    %argp = getelementptr ptr, ptr %argv, i64 %sa_argv_i")
+        emit(ir_output, "    %arg = load ptr, ptr %argp, align 8")
+        emit(ir_output, "    %alen = call i64 @strlen(ptr %arg)")
+        emit(ir_output, "    %sp = getelementptr inbounds %struct.string, ptr %strs, i64 %sa_i, i32 0")
+        emit(ir_output, "    store ptr %arg, ptr %sp, align 8")
+        emit(ir_output, "    %sl = getelementptr inbounds %struct.string, ptr %strs, i64 %sa_i, i32 1")
+        emit(ir_output, "    store i64 %alen, ptr %sl, align 8")
+        emit(ir_output, "    %spi = ptrtoint ptr %sp to i64")
+        emit(ir_output, "    %dpi = getelementptr i64, ptr %data, i64 %sa_i")
+        emit(ir_output, "    store i64 %spi, ptr %dpi, align 8")
+        emit(ir_output, "    br label %sa_cont")
+        emit(ir_output, "sa_cont:")
+        emit(ir_output, "    %sa_next = add i64 %sa_i, 1")
+        emit(ir_output, "    br label %sys_args_init")
+        emit(ir_output, "sa_done:")
+        emit(ir_output, "    %vdata_f = getelementptr inbounds %struct.vector, ptr @sys_args, i32 0, i32 0")
+        emit(ir_output, "    store ptr %data, ptr %vdata_f, align 8")
+        emit(ir_output, "    %vsz_f = getelementptr inbounds %struct.vector, ptr @sys_args, i32 0, i32 1")
+        emit(ir_output, "    store i64 %nargs, ptr %vsz_f, align 8")
+        emit(ir_output, "    %vcap_f = getelementptr inbounds %struct.vector, ptr @sys_args, i32 0, i32 2")
+        emit(ir_output, "    store i64 %nargs, ptr %vcap_f, align 8")
         
-    i = 0
-    size = list_size(root_ids)
-    while i < size:
-        id := root_ids[i + 0]
-        node := nodes[id + 0]
-        if node.kind != "FN" and node.kind != "MODEL":
-            generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, id)
-        i += 1
-        
-    emit(ir_output, "    ret i32 0")
-    emit(ir_output, "}")
+        if has_user_main:
+            emit(ir_output, "    %unused = call i64 @__zk_user_main()")
+            
+        i = 0
+        size = list_size(root_ids)
+        while i < size:
+            id := root_ids[i + 0]
+            node := nodes[id + 0]
+            if node.kind != "FN" and node.kind != "MODEL":
+                generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, id)
+            i += 1
+            
+        emit(ir_output, "    ret i32 0")
+        emit(ir_output, "}")
     
     return ir_output

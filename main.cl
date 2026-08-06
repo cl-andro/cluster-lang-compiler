@@ -142,13 +142,27 @@ fn main():
     else:
         file_path := sys_args[0 + 0]
         
+        target_bpf := false
         output_path: string := ""
-        if list_size(sys_args) >= 3:
-            if sys_args[1 + 0] == "-o":
-                output_path = sys_args[2 + 0]
         
-        if output_path == "":
-            output_path = get_output_path(file_path)
+        arg_idx := 1
+        sz_args := list_size(sys_args)
+        while arg_idx < sz_args:
+            if sys_args[arg_idx + 0] == "-o" and arg_idx + 1 < sz_args:
+                output_path = sys_args[arg_idx + 1 + 0]
+                arg_idx += 2
+            elif sys_args[arg_idx + 0] == "-target" and arg_idx + 1 < sz_args:
+                target_val := sys_args[arg_idx + 1 + 0]
+                if target_val == "bpf":
+                    target_bpf = true
+                arg_idx += 2
+            else:
+                arg_idx += 1
+                
+        if target_bpf:
+            set_target_bpf(1)
+        else:
+            set_target_bpf(0)
             
         dot_idx := -1
         i := text_length(file_path) - 1
@@ -165,6 +179,12 @@ fn main():
         if dot_idx != -1:
             base_path = str_substr(file_path, 0, dot_idx)
             
+        if output_path == "":
+            if target_bpf:
+                output_path = base_path + ".o"
+            else:
+                output_path = get_output_path(file_path)
+                
         ll_path := base_path + ".ll"
         obj_path := base_path + ".o"
         
@@ -180,50 +200,68 @@ fn main():
         put "[ZKC] Saving LLVM IR to: " + ll_path
         file_write(ll_path, llvm_ir)
         
-        put "[ZKC] Compiling LLVM IR to native binary..."
-        
-        zkc_dir := get_zkc_dir()
-        clang_cmd := zkc_dir + "cl-cc " + ll_path + " -no-pie -o " + output_path
-        ret := system(c_str(clang_cmd))
-        if ret != 0:
-            clang_cmd = zkc_dir + "cl-cc -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
-            ret = system(c_str(clang_cmd))
-            
-        if ret != 0:
-            clang_cmd = "cl-cc " + ll_path + " -no-pie -o " + output_path
-            ret = system(c_str(clang_cmd))
-        if ret != 0:
-            clang_cmd = "cl-cc -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
-            ret = system(c_str(clang_cmd))
-            
-        if ret != 0:
-            clang_cmd = "clang " + ll_path + " -no-pie -o " + output_path
-            ret = system(c_str(clang_cmd))
-        if ret != 0:
-            clang_cmd = "clang -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
-            ret = system(c_str(clang_cmd))
-            
-        if ret != 0:
-            put "[ZKC] clang compiler failed or not found. Trying llc + gcc..."
-            llc_cmd := "llc -opaque-pointers " + ll_path + " -filetype=obj -o " + obj_path
-            ret = system(c_str(llc_cmd))
+        if target_bpf:
+            put "[ZKC] Compiling LLVM IR to eBPF bytecode..."
+            clang_cmd := "clang -target bpf -O2 -c " + ll_path + " -o " + output_path
+            ret := system(c_str(clang_cmd))
             if ret != 0:
-                llc_specific := "/media/alamgir-zk/debian13-hdd/alamgir-zk/Cluster-Family/cluster-lang/zk_modules/containers/rust/rootfs/opt/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/llc"
-                llc_specific_cmd := llc_specific + " -opaque-pointers " + ll_path + " -filetype=obj -o " + obj_path
-                ret = system(c_str(llc_specific_cmd))
+                llc_cmd := "llc -march=bpf -filetype=obj " + ll_path + " -o " + output_path
+                ret = system(c_str(llc_cmd))
+                if ret != 0:
+                    llc_specific := "/media/alamgir-zk/debian13-hdd/alamgir-zk/Cluster-Family/cluster-lang/zk_modules/containers/rust/rootfs/opt/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/llc"
+                    llc_specific_cmd := llc_specific + " -march=bpf -filetype=obj " + ll_path + " -o " + output_path
+                    ret = system(c_str(llc_specific_cmd))
                 
             if ret == 0:
-                gcc_cmd := "gcc -no-pie " + obj_path + " -o " + output_path
-                ret = system(c_str(gcc_cmd))
-                if ret == 0:
-                    system(c_str("rm -f " + obj_path))
-                    
-        if ret == 0:
-            // Clean up temporary .ll file unless requested otherwise
-            system(c_str("rm -f " + ll_path))
-            put "[ZKC] Success! Standalone executable generated at: " + output_path
+                system(c_str("rm -f " + ll_path))
+                put "[ZKC] Success! eBPF object file generated at: " + output_path
+            else:
+                put "[ZKC] Error: Failed to compile eBPF bytecode. LLVM IR saved at: " + ll_path
+                exit_code(1)
         else:
-            put "[ZKC] Error: Failed to compile LLVM IR to binary. LLVM IR saved at: " + ll_path
-            exit_code(1)
+            put "[ZKC] Compiling LLVM IR to native binary..."
+            
+            zkc_dir := get_zkc_dir()
+            clang_cmd := zkc_dir + "cl-cc " + ll_path + " -no-pie -o " + output_path
+            ret := system(c_str(clang_cmd))
+            if ret != 0:
+                clang_cmd = zkc_dir + "cl-cc -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
+                ret = system(c_str(clang_cmd))
+                
+            if ret != 0:
+                clang_cmd = "cl-cc " + ll_path + " -no-pie -o " + output_path
+                ret = system(c_str(clang_cmd))
+            if ret != 0:
+                clang_cmd = "cl-cc -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
+                ret = system(c_str(clang_cmd))
+                
+            if ret != 0:
+                clang_cmd = "clang " + ll_path + " -no-pie -o " + output_path
+                ret = system(c_str(clang_cmd))
+            if ret != 0:
+                clang_cmd = "clang -mllvm -opaque-pointers " + ll_path + " -no-pie -o " + output_path
+                ret = system(c_str(clang_cmd))
+                
+            if ret != 0:
+                put "[ZKC] clang compiler failed or not found. Trying llc + gcc..."
+                llc_cmd := "llc -opaque-pointers " + ll_path + " -filetype=obj -o " + obj_path
+                ret = system(c_str(llc_cmd))
+                if ret != 0:
+                    llc_specific := "/media/alamgir-zk/debian13-hdd/alamgir-zk/Cluster-Family/cluster-lang/zk_modules/containers/rust/rootfs/opt/rust/lib/rustlib/x86_64-unknown-linux-gnu/bin/llc"
+                    llc_specific_cmd := llc_specific + " -opaque-pointers " + ll_path + " -filetype=obj -o " + obj_path
+                    ret = system(c_str(llc_specific_cmd))
+                    
+                if ret == 0:
+                    gcc_cmd := "gcc -no-pie " + obj_path + " -o " + output_path
+                    ret = system(c_str(gcc_cmd))
+                    if ret == 0:
+                        system(c_str("rm -f " + obj_path))
+                        
+            if ret == 0:
+                system(c_str("rm -f " + ll_path))
+                put "[ZKC] Success! Standalone executable generated at: " + output_path
+            else:
+                put "[ZKC] Error: Failed to compile LLVM IR to binary. LLVM IR saved at: " + ll_path
+                exit_code(1)
 
 
