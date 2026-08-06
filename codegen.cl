@@ -9,6 +9,10 @@ cpp_inject "inline std::string char_to_string(int64_t c) { return std::string(1,
 cpp_inject "inline std::string str_heap_copy(std::string s) { return s; }"
 cpp_inject "inline void str_append(std::string &s, const std::string &t) { s += t; }"
 cpp_inject "inline void print_err(std::string s) { std::cerr << s << std::endl; }"
+cpp_inject "std::vector<std::string> global_user_fns;"
+cpp_inject "void clear_global_user_fns() { global_user_fns.clear(); }"
+cpp_inject "void add_global_user_fn(std::string name) { global_user_fns.push_back(name); }"
+cpp_inject "bool has_global_user_fn(std::string name) { for (const auto &n : global_user_fns) { if (n == name) return true; } return false; }"
 
 fn emit(&ir_output: string, line: string):
     str_append(ir_output, line)
@@ -45,6 +49,17 @@ fn escape_llvm_string(s: string) -> string:
         else:
             res = res + char_to_string(ch)
         i += 1
+    return res
+
+fn register_user_fn(name: string):
+    cpp_inject "add_global_user_fn(name);"
+    
+fn clear_user_fns():
+    cpp_inject "clear_global_user_fns();"
+    
+fn is_user_fn(name: string) -> int:
+    res := 0
+    cpp_inject "res = has_global_user_fn(name) ? 1 : 0;"
     return res
 
 fn get_llvm_string_len(s: string) -> int:
@@ -449,6 +464,8 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
         elif node.op == "&":
             operand := nodes[node.left_id + 0]
             if operand.kind == "VAR":
+                if is_user_fn(operand.name) == 1:
+                    return "@" + operand.name
                 return "%" + operand.name
             return ""
         elif node.op == "*":
@@ -1498,7 +1515,7 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
                         arg_val_reg = paddr_reg
                     else:
                         arg_val_reg = var_ref(arg_expr.name)
-            elif arg_type == "string" or arg_type == "vector":
+            elif arg_type == "ptr" or arg_type == "string" or arg_type == "vector":
                 arg_type_str = "ptr"
             elif is_model_type(nodes, arg_type):
                 arg_type_str = "ptr"
@@ -1520,7 +1537,13 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             
         temp_counter += 1
         reg := "%t" + to_text(temp_counter)
-        emit(ir_output, "    " + reg + " = call i64 @" + fn_name + "(" + args_str + ")")
+        if is_user_fn(fn_name) == 1:
+            temp_counter += 1
+            fptr_reg := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + fptr_reg + " = load ptr, ptr @__zk_fn_table_" + fn_name + ", align 8")
+            emit(ir_output, "    " + reg + " = call i64 " + fptr_reg + "(" + args_str + ")")
+        else:
+            emit(ir_output, "    " + reg + " = call i64 @" + fn_name + "(" + args_str + ")")
         
         fn_ret_type: string := "int"
         k_c := 0
@@ -1727,6 +1750,30 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
     emit(ir_output, "target triple = \"x86_64-pc-linux-gnu\"")
     emit(ir_output, "")
     
+    clear_user_fns()
+    user_fns := vector[string]()
+    i_fn := 0
+    sz_fn := list_size(root_ids)
+    while i_fn < sz_fn:
+        id := root_ids[i_fn + 0]
+        node := nodes[id + 0]
+        if node.kind == "FN" and node.name != "main":
+            if not has_var(user_fns, node.name):
+                list_push(user_fns, node.name)
+                register_user_fn(node.name)
+        i_fn += 1
+        
+    emit(ir_output, "; IFT Table declarations")
+    j := 0
+    while j < list_size(user_fns):
+        fn_name := user_fns[j + 0]
+        fn_len := text_length(fn_name)
+        emit(ir_output, "@.str_fn_" + fn_name + " = private unnamed_addr constant [" + to_text(fn_len + 1) + " x i8] c\"" + fn_name + "\\00\", align 1")
+        emit(ir_output, "@__zk_fn_table_" + fn_name + " = global ptr @" + fn_name + ", align 8")
+        j += 1
+        
+    emit(ir_output, "")
+    
     # 1. Output string and vector struct definitions globally
     emit(ir_output, "%struct.string = type { ptr, i64 }")
     emit(ir_output, "%struct.vector = type { ptr, i64, i64 }")
@@ -1798,6 +1845,7 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
     emit(ir_output, "declare i64 @system(ptr)")
     emit(ir_output, "declare i32 @access(ptr, i32)")
     emit(ir_output, "declare i32 @remove(ptr)")
+    emit(ir_output, "declare i32 @strcmp(ptr, ptr)")
     emit(ir_output, "")
     
     # 4. Add standard runtime functions
@@ -2086,6 +2134,31 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
     emit(ir_output, "found:")
     emit(ir_output, "    ret i64 1")
     emit(ir_output, "notfound:")
+    emit(ir_output, "    ret i64 0")
+    emit(ir_output, "}")
+    emit(ir_output, "; Standard Library sys_patch_function")
+    emit(ir_output, "define i64 @sys_patch_function(ptr %name_struct, ptr %new_ptr) {")
+    emit(ir_output, "entry:")
+    emit(ir_output, "    %p_str_field = getelementptr inbounds %struct.string, ptr %name_struct, i32 0, i32 0")
+    emit(ir_output, "    %p_str = load ptr, ptr %p_str_field, align 8")
+    
+    j_patch := 0
+    while j_patch < list_size(user_fns):
+        fn_name := user_fns[j_patch + 0]
+        emit(ir_output, "    %cmp_" + fn_name + " = call i32 @strcmp(ptr %p_str, ptr @.str_fn_" + fn_name + ")")
+        emit(ir_output, "    %is_" + fn_name + " = icmp eq i32 %cmp_" + fn_name + ", 0")
+        
+        next_label := "cont_" + to_text(j_patch)
+        patch_label := "patch_" + to_text(j_patch)
+        emit(ir_output, "    br i1 %is_" + fn_name + ", label %" + patch_label + ", label %" + next_label)
+        
+        emit(ir_output, patch_label + ":")
+        emit(ir_output, "    store ptr %new_ptr, ptr @__zk_fn_table_" + fn_name + ", align 8")
+        emit(ir_output, "    ret i64 0")
+        
+        emit(ir_output, next_label + ":")
+        j_patch += 1
+        
     emit(ir_output, "    ret i64 0")
     emit(ir_output, "}")
     emit(ir_output, "")
