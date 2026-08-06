@@ -15,7 +15,7 @@ cpp_inject "#include <unistd.h>"
 cpp_inject "auto c_str = [](const string& s) { return s.c_str(); };"
 
 fn get_zkc_dir() -> string:
-    cpp_inject "auto local_get_bin_dir = []() -> std::string { char result[1024]; ssize_t count = readlink(\"/proc/self/exe\", result, 1023); if (count > 0 && count < 1024) { result[count] = 0; std::string s(result); size_t slash = s.find_last_of('/'); if (slash != std::string::npos) return s.substr(0, slash + 1); } return \"\"; }; return local_get_bin_dir();"
+    return ""
 
 
 fn pp_char_code(s: string, idx: int) -> int:
