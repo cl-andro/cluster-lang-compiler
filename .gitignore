@@ -4,3 +4,4 @@ compiler.out
 *.o
 *.ll
 *.out
+bin/cl-cc
