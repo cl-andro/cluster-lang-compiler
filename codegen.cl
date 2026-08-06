@@ -110,7 +110,22 @@ fn find_var_model_type(&nodes: vector[ASTNode], var_name: string) -> string:
         if n.kind == "ASSIGN" and n.name == var_name:
             expr_id := n.left_id
             expr_node := nodes[expr_id + 0]
-            if expr_node.kind == "CALL":
+            while expr_node.kind == "BLOCK":
+                curr_block := expr_id
+                last_expr_id := -1
+                while curr_block != -1:
+                    block_node := nodes[curr_block + 0]
+                    last_expr_id = block_node.left_id
+                    curr_block = block_node.right_id
+                if last_expr_id != -1:
+                    expr_id = last_expr_id
+                    expr_node = nodes[expr_id + 0]
+                else:
+                    break
+            
+            if expr_node.kind == "VAR":
+                return find_var_model_type(nodes, expr_node.name)
+            elif expr_node.kind == "CALL":
                 if is_model_type(nodes, expr_node.name):
                     return expr_node.name
                 if expr_node.name == "vector" and expr_node.op != "":
@@ -238,10 +253,18 @@ fn get_node_type(&nodes: vector[ASTNode], &var_allocs: vector[string], &var_type
         if is_str_concat:
             return "string"
         return "int"
+    elif node.kind == "BLOCK":
+        curr_block := node_id
+        last_type := "int"
+        while curr_block != -1:
+            block_node := nodes[curr_block + 0]
+            last_type = get_node_type(nodes, var_allocs, var_types, block_node.left_id)
+            curr_block = block_node.right_id
+        return last_type
     elif node.kind == "CALL":
         if node.name == "vector":
             return "vector"
-        if node.name == "read_file" or node.name == "read":
+        if node.name == "read_file" or node.name == "read" or node.name == "file_read":
             return "string"
         if node.name == "to_text":
             return "string"
@@ -412,6 +435,13 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             zext_reg: string := "%t" + to_text(temp_counter)
             emit(ir_output, "    " + zext_reg + " = zext i1 " + cmp_reg + " to i64")
             return zext_reg
+        elif node.op == "-":
+            val_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, node.left_id)
+            
+            temp_counter += 1
+            neg_reg: string := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + neg_reg + " = sub i64 0, " + val_reg)
+            return neg_reg
         return ""
     elif node.kind == "BINARY":
         left_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, node.left_id)
@@ -491,6 +521,18 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             op_name = "mul"
         elif node.op == "/":
             op_name = "sdiv"
+        elif node.op == "%":
+            op_name = "srem"
+        elif node.op == "&":
+            op_name = "and"
+        elif node.op == "|":
+            op_name = "or"
+        elif node.op == "^":
+            op_name = "xor"
+        elif node.op == "<<":
+            op_name = "shl"
+        elif node.op == ">>":
+            op_name = "ashr"
         elif node.op == "==":
             op_name = "icmp eq"
         elif node.op == "!=":
@@ -784,11 +826,12 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
         return ""
     elif node.kind == "BLOCK":
         curr_block := node_id
+        last_reg := ""
         while curr_block != -1:
             block_node := nodes[curr_block + 0]
-            generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, block_node.left_id)
+            last_reg = generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, block_node.left_id)
             curr_block = block_node.right_id
-        return ""
+        return last_reg
     elif node.kind == "RETURN":
         if node.left_id == -1:
             emit(ir_output, "    ret i64 0")
@@ -892,7 +935,7 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             emit(ir_output, wr_merge + ":")
             return ""
             
-        if node.name == "read_file" or node.name == "read":
+        if node.name == "read_file" or node.name == "read" or node.name == "file_read":
             rdf_arg := nodes[node.left_id + 0]
             arg_expr_id := rdf_arg.left_id
             path_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg_expr_id)
@@ -992,6 +1035,50 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             rd_res := "%t" + to_text(temp_counter)
             emit(ir_output, "    " + rd_res + " = phi ptr [ " + es_struct + ", %" + rd_empty + " ], [ " + temp_str + ", %" + rd_ok + " ]")
             return rd_res
+            
+        if node.name == "file_exists":
+            fe_arg := nodes[node.left_id + 0]
+            path_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, fe_arg.left_id)
+            
+            temp_counter += 1
+            path_ptr_f := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + path_ptr_f + " = getelementptr inbounds %struct.string, ptr " + path_reg + ", i32 0, i32 0")
+            temp_counter += 1
+            path_ptr := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + path_ptr + " = load ptr, ptr " + path_ptr_f + ", align 8")
+            
+            temp_counter += 1
+            access_res := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + access_res + " = call i32 @access(ptr " + path_ptr + ", i32 0)")
+            temp_counter += 1
+            exists_cond := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + exists_cond + " = icmp eq i32 " + access_res + ", 0")
+            temp_counter += 1
+            zext_res := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + zext_res + " = zext i1 " + exists_cond + " to i64")
+            return zext_res
+
+        if node.name == "file_delete":
+            fd_arg := nodes[node.left_id + 0]
+            path_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, fd_arg.left_id)
+            
+            temp_counter += 1
+            path_ptr_f := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + path_ptr_f + " = getelementptr inbounds %struct.string, ptr " + path_reg + ", i32 0, i32 0")
+            temp_counter += 1
+            path_ptr := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + path_ptr + " = load ptr, ptr " + path_ptr_f + ", align 8")
+            
+            temp_counter += 1
+            remove_res := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + remove_res + " = call i32 @remove(ptr " + path_ptr + ")")
+            temp_counter += 1
+            delete_cond := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + delete_cond + " = icmp eq i32 " + remove_res + ", 0")
+            temp_counter += 1
+            zext_res := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + zext_res + " = zext i1 " + delete_cond + " to i64")
+            return zext_res
             
         if node.name == "to_text":
             tot_arg := nodes[node.left_id + 0]
@@ -1672,6 +1759,8 @@ fn generate_program_ir(&nodes: vector[ASTNode], root_ids: vector[int]) -> string
     emit(ir_output, "declare i64 @fwrite(ptr, i64, i64, ptr)")
     emit(ir_output, "declare i32 @fclose(ptr)")
     emit(ir_output, "declare i64 @system(ptr)")
+    emit(ir_output, "declare i32 @access(ptr, i32)")
+    emit(ir_output, "declare i32 @remove(ptr)")
     emit(ir_output, "")
     
     # 4. Add standard runtime functions

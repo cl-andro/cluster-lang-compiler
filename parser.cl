@@ -4,11 +4,20 @@
 import ast
 import lexer
 
+cpp_inject "static int64 list_counter = 0;"
+
+fn next_list_id() -> int:
+    cpp_inject "return ++list_counter;"
+
 cpp_inject "using namespace ast;"
 cpp_inject "using namespace lexer;"
 
 cpp_inject "int64 parse_logical(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
 cpp_inject "int64 parse_comparison(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
+cpp_inject "int64 parse_bit_or(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
+cpp_inject "int64 parse_bit_xor(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
+cpp_inject "int64 parse_bit_and(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
+cpp_inject "int64 parse_shift(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
 cpp_inject "int64 parse_expr(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
 cpp_inject "int64 parse_term(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
 cpp_inject "int64 parse_primary(int64& cursor, std::vector<ast::Token>& tokens, std::vector<ast::ASTNode>& nodes);"
@@ -58,14 +67,69 @@ fn consume(&cursor: int, &tokens: vector[Token], kind: string, val: string) -> T
 
 fn parse_primary(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> int:
     tok := peek(cursor, tokens)
+    if tok.kind == "SYMBOL" and tok.value == "[":
+        advance(cursor, tokens)
+        item_ids : vector[int] = vector[int]()
+        if not match_token(cursor, tokens, "SYMBOL", "]"):
+            while true:
+                item_id := parse_logical(cursor, tokens, nodes)
+                list_push(item_ids, item_id)
+                if match_token(cursor, tokens, "SYMBOL", ","):
+                    advance(cursor, tokens)
+                else:
+                    break
+        consume(cursor, tokens, "SYMBOL", "]")
+        
+        elem_type: string = "int"
+        if list_size(item_ids) > 0:
+            first_item := nodes[item_ids[0] + 0]
+            if first_item.kind == "LITERAL" and first_item.val_int == 1:
+                elem_type = "string"
+                
+        list_idx := next_list_id()
+        tmp_name := "_lst_" + to_text(list_idx)
+        
+        vec_call := make_node(nodes, "CALL", "vector", elem_type, 0, -1, -1)
+        assign_init := make_node(nodes, "ASSIGN", tmp_name, ":=", -1, vec_call, -1)
+        
+        stmt_ids : vector[int] = vector[int]()
+        list_push(stmt_ids, assign_init)
+        
+        i := 0
+        sz := list_size(item_ids)
+        while i < sz:
+            item_id := item_ids[i + 0]
+            tmp_var_node := make_node(nodes, "VAR", tmp_name, "", 0, -1, -1)
+            arg2 := make_node(nodes, "ARG", "", "", 0, item_id, -1)
+            arg1 := make_node(nodes, "ARG", "", "", 0, tmp_var_node, arg2)
+            push_call := make_node(nodes, "CALL", "list_push", "", 0, arg1, -1)
+            list_push(stmt_ids, push_call)
+            i += 1
+            
+        final_var := make_node(nodes, "VAR", tmp_name, "", 0, -1, -1)
+        list_push(stmt_ids, final_var)
+        
+        num_stmts := list_size(stmt_ids)
+        curr_block := -1
+        j := num_stmts - 1
+        while j >= 0:
+            stmt_id := stmt_ids[j + 0]
+            curr_block = make_node(nodes, "BLOCK", "", "", 0, stmt_id, curr_block)
+            j -= 1
+            
+        return curr_block
+        
+
+    if tok.kind == "SYMBOL" and tok.value == "(":
+        advance(cursor, tokens)
+        expr_id := parse_logical(cursor, tokens, nodes)
+        consume(cursor, tokens, "SYMBOL", ")")
+        return expr_id
+        
     if tok.kind == "SYMBOL" and tok.value == "-":
-        next_cursor := cursor + 1
-        next_tok := peek(next_cursor, tokens)
-        if next_tok.kind == "NUMBER":
-            advance(cursor, tokens)
-            advance(cursor, tokens)
-            neg_val: string := "-" + next_tok.value
-            return make_node(nodes, "LITERAL", neg_val, "", 0, -1, -1)
+        advance(cursor, tokens)
+        val_id := parse_primary(cursor, tokens, nodes)
+        return make_node(nodes, "UNARY", "", "-", 0, val_id, -1)
             
     if tok.kind == "KEYWORD" and tok.value == "not":
         advance(cursor, tokens)
@@ -208,7 +272,7 @@ fn parse_primary(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) 
 
 fn parse_term(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> int:
     left := parse_primary(cursor, tokens, nodes)
-    while match_token(cursor, tokens, "SYMBOL", "*") or match_token(cursor, tokens, "SYMBOL", "/"):
+    while match_token(cursor, tokens, "SYMBOL", "*") or match_token(cursor, tokens, "SYMBOL", "/") or match_token(cursor, tokens, "SYMBOL", "%"):
         op := advance(cursor, tokens).value
         right := parse_primary(cursor, tokens, nodes)
         left = make_node(nodes, "BINARY", "", op, 0, left, right)
@@ -223,8 +287,40 @@ fn parse_expr(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> 
     return left
 
 fn parse_comparison(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> int:
-    left := parse_expr(cursor, tokens, nodes)
+    left := parse_bit_or(cursor, tokens, nodes)
     while match_token(cursor, tokens, "SYMBOL", "==") or match_token(cursor, tokens, "SYMBOL", "!=") or match_token(cursor, tokens, "SYMBOL", "<") or match_token(cursor, tokens, "SYMBOL", ">") or match_token(cursor, tokens, "SYMBOL", ">=") or match_token(cursor, tokens, "SYMBOL", "<="):
+        op := advance(cursor, tokens).value
+        right := parse_bit_or(cursor, tokens, nodes)
+        left = make_node(nodes, "BINARY", "", op, 0, left, right)
+    return left
+
+fn parse_bit_or(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> int:
+    left := parse_bit_xor(cursor, tokens, nodes)
+    while match_token(cursor, tokens, "SYMBOL", "|"):
+        op := advance(cursor, tokens).value
+        right := parse_bit_xor(cursor, tokens, nodes)
+        left = make_node(nodes, "BINARY", "", op, 0, left, right)
+    return left
+
+fn parse_bit_xor(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> int:
+    left := parse_bit_and(cursor, tokens, nodes)
+    while match_token(cursor, tokens, "SYMBOL", "^"):
+        op := advance(cursor, tokens).value
+        right := parse_bit_and(cursor, tokens, nodes)
+        left = make_node(nodes, "BINARY", "", op, 0, left, right)
+    return left
+
+fn parse_bit_and(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> int:
+    left := parse_shift(cursor, tokens, nodes)
+    while match_token(cursor, tokens, "SYMBOL", "&"):
+        op := advance(cursor, tokens).value
+        right := parse_shift(cursor, tokens, nodes)
+        left = make_node(nodes, "BINARY", "", op, 0, left, right)
+    return left
+
+fn parse_shift(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> int:
+    left := parse_expr(cursor, tokens, nodes)
+    while match_token(cursor, tokens, "SYMBOL", "<<") or match_token(cursor, tokens, "SYMBOL", ">>"):
         op := advance(cursor, tokens).value
         right := parse_expr(cursor, tokens, nodes)
         left = make_node(nodes, "BINARY", "", op, 0, left, right)
@@ -372,6 +468,61 @@ fn parse_stmt(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> 
         cond_id := parse_logical(cursor, tokens, nodes)
         body_block := parse_block(cursor, tokens, nodes)
         return make_node(nodes, "WHILE", "", "", 0, cond_id, body_block)
+    elif tok.kind == "KEYWORD" and tok.value == "for":
+        advance(cursor, tokens)
+        var_tok := consume(cursor, tokens, "IDENTIFIER", "")
+        consume(cursor, tokens, "KEYWORD", "in")
+        
+        iter_id := parse_logical(cursor, tokens, nodes)
+        body_id := parse_block(cursor, tokens, nodes)
+        
+        iter_node := nodes[iter_id + 0]
+        if iter_node.kind == "CALL" and iter_node.name == "range":
+            arg1_node := nodes[iter_node.left_id + 0]
+            start_id := arg1_node.left_id
+            arg2_node := nodes[arg1_node.right_id + 0]
+            end_id := arg2_node.left_id
+            
+            i_var := make_node(nodes, "VAR", var_tok.value, "", 0, -1, -1)
+            assign_init := make_node(nodes, "ASSIGN", var_tok.value, ":=", -1, start_id, -1)
+            cond_id := make_node(nodes, "BINARY", "", "<", 0, i_var, end_id)
+            one_lit := make_node(nodes, "LITERAL", "1", "", 0, -1, -1)
+            step_add := make_node(nodes, "BINARY", "", "+", 0, i_var, one_lit)
+            step_assign := make_node(nodes, "ASSIGN", var_tok.value, "=", -1, step_add, -1)
+            
+            new_body := make_node(nodes, "BLOCK", "", "", 0, body_id, step_assign)
+            while_node := make_node(nodes, "WHILE", "", "", 0, cond_id, new_body)
+            return make_node(nodes, "BLOCK", "", "", 0, assign_init, while_node)
+        else:
+            idx_var_name := "_idx_" + var_tok.value
+            sz_var_name := "_sz_" + var_tok.value
+            
+            zero_lit := make_node(nodes, "LITERAL", "0", "", 0, -1, -1)
+            assign_idx_init := make_node(nodes, "ASSIGN", idx_var_name, ":=", -1, zero_lit, -1)
+            
+            size_arg := make_node(nodes, "ARG", "", "", 0, iter_id, -1)
+            size_call := make_node(nodes, "CALL", "list_size", "", 0, size_arg, -1)
+            assign_sz_init := make_node(nodes, "ASSIGN", sz_var_name, ":=", -1, size_call, -1)
+            
+            idx_var := make_node(nodes, "VAR", idx_var_name, "", 0, -1, -1)
+            sz_var := make_node(nodes, "VAR", sz_var_name, "", 0, -1, -1)
+            
+            cond_id := make_node(nodes, "BINARY", "", "<", 0, idx_var, sz_var)
+            
+            idx_expr := make_node(nodes, "INDEX", "", "", 0, iter_id, idx_var)
+            x_assign := make_node(nodes, "ASSIGN", var_tok.value, ":=", -1, idx_expr, -1)
+            
+            one_lit := make_node(nodes, "LITERAL", "1", "", 0, -1, -1)
+            step_add := make_node(nodes, "BINARY", "", "+", 0, idx_var, one_lit)
+            step_assign := make_node(nodes, "ASSIGN", idx_var_name, "=", -1, step_add, -1)
+            
+            body_block1 := make_node(nodes, "BLOCK", "", "", 0, x_assign, body_id)
+            body_block2 := make_node(nodes, "BLOCK", "", "", 0, body_block1, step_assign)
+            
+            while_node := make_node(nodes, "WHILE", "", "", 0, cond_id, body_block2)
+            
+            init_block := make_node(nodes, "BLOCK", "", "", 0, assign_idx_init, assign_sz_init)
+            return make_node(nodes, "BLOCK", "", "", 0, init_block, while_node)
     elif tok.kind == "KEYWORD" and tok.value == "fn":
         advance(cursor, tokens)
         fn_name_tok := consume(cursor, tokens, "IDENTIFIER", "")
@@ -457,7 +608,7 @@ fn parse_stmt(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> 
         if next_tok.kind == "SYMBOL":
             if next_tok.value == "=" or next_tok.value == ":=":
                 is_assign = true
-            elif next_tok.value == "+=" or next_tok.value == "-=" or next_tok.value == "*=" or next_tok.value == "/=":
+            elif next_tok.value == "+=" or next_tok.value == "-=" or next_tok.value == "*=" or next_tok.value == "/=" or next_tok.value == "%=":
                 is_assign = true
                 aug_op = next_tok.value
         if is_assign:
@@ -475,6 +626,8 @@ fn parse_stmt(&cursor: int, &tokens: vector[Token], &nodes: vector[ASTNode]) -> 
                     aug_char = "*"
                 elif aug_op == "/=":
                     aug_char = "/"
+                elif aug_op == "%=":
+                    aug_char = "%"
                 bin_id := make_node(nodes, "BINARY", "", aug_char, -1, lhs, expr_id)
                 if lhs_node.kind == "MEMBER" or lhs_node.kind == "INDEX":
                     return make_node(nodes, "ASSIGN", "", "=", lhs, bin_id, -1)
