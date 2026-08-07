@@ -294,6 +294,8 @@ fn get_node_type(&nodes: vector[ASTNode], &var_allocs: vector[string], &var_type
     elif node.kind == "CALL":
         if node.name == "vector":
             return "vector"
+        if node.name == "file_open":
+            return "ptr"
         if node.name == "read_file" or node.name == "read" or node.name == "file_read":
             return "string"
         if node.name == "to_text":
@@ -601,7 +603,13 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             
         if is_comp:
             cmp_type: string := "i64"
-            if left_type == "string" or right_type == "string":
+            if left_type == "ptr" or right_type == "ptr":
+                cmp_type = "ptr"
+                if left_reg == "0":
+                    left_reg = "null"
+                if right_reg == "0":
+                    right_reg = "null"
+            elif left_type == "string" or right_type == "string":
                 if node.op == "==" or node.op == "!=":
                     temp_counter += 1
                     a_ptr_f := "%t" + to_text(temp_counter)
@@ -936,6 +944,33 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             emit(ir_output, "    store i64 " + val_reg + ", ptr " + ptr_reg + ", align 8")
             return ""
             
+        if node.name == "file_seek":
+            arg1_node := nodes[node.left_id + 0]
+            file_ptr := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg1_node.left_id)
+            arg2_node := nodes[arg1_node.right_id + 0]
+            offset := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg2_node.left_id)
+            temp_counter += 1
+            unused_seek := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + unused_seek + " = call i32 @fseek(ptr " + file_ptr + ", i64 " + offset + ", i32 0)")
+            return ""
+            
+        if node.name == "file_write_byte":
+            arg1_node := nodes[node.left_id + 0]
+            file_ptr := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg1_node.left_id)
+            arg2_node := nodes[arg1_node.right_id + 0]
+            byte_val := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg2_node.left_id)
+            temp_counter += 1
+            cast_byte := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + cast_byte + " = trunc i64 " + byte_val + " to i8")
+            temp_counter += 1
+            allocated_byte := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + allocated_byte + " = alloca i8, align 1")
+            emit(ir_output, "    store i8 " + cast_byte + ", ptr " + allocated_byte + ", align 1")
+            temp_counter += 1
+            fwrite_res := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + fwrite_res + " = call i64 @fwrite(ptr " + allocated_byte + ", i64 1, i64 1, ptr " + file_ptr + ")")
+            return ""
+
         if node.name == "file_write" or node.name == "write_file":
             arg1_node := nodes[node.left_id + 0]
             path_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg1_node.left_id)
@@ -1000,6 +1035,39 @@ fn generate_node_ir(&nodes: vector[ASTNode], &ir_output: string, &temp_counter: 
             emit(ir_output, wr_merge + ":")
             return ""
             
+        if node.name == "file_open":
+            arg1_node := nodes[node.left_id + 0]
+            path_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg1_node.left_id)
+            arg2_node := nodes[arg1_node.right_id + 0]
+            mode_reg := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg2_node.left_id)
+            
+            temp_counter += 1
+            path_ptr_f := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + path_ptr_f + " = getelementptr inbounds %struct.string, ptr " + path_reg + ", i32 0, i32 0")
+            temp_counter += 1
+            path_ptr := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + path_ptr + " = load ptr, ptr " + path_ptr_f + ", align 8")
+            
+            temp_counter += 1
+            mode_ptr_f := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + mode_ptr_f + " = getelementptr inbounds %struct.string, ptr " + mode_reg + ", i32 0, i32 0")
+            temp_counter += 1
+            mode_ptr := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + mode_ptr + " = load ptr, ptr " + mode_ptr_f + ", align 8")
+            
+            temp_counter += 1
+            file_ptr := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + file_ptr + " = call ptr @fopen(ptr " + path_ptr + ", ptr " + mode_ptr + ")")
+            return file_ptr
+            
+        if node.name == "file_close":
+            arg := nodes[node.left_id + 0]
+            file_ptr := generate_node_ir(nodes, ir_output, temp_counter, label_counter, var_allocs, var_types, break_stack, hoisted_vars, arg.left_id)
+            temp_counter += 1
+            unused_close := "%t" + to_text(temp_counter)
+            emit(ir_output, "    " + unused_close + " = call i32 @fclose(ptr " + file_ptr + ")")
+            return ""
+
         if node.name == "read_file" or node.name == "read" or node.name == "file_read":
             rdf_arg := nodes[node.left_id + 0]
             arg_expr_id := rdf_arg.left_id
